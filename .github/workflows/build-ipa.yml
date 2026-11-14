@@ -1,0 +1,80 @@
+name: Build Unsigned IPA
+
+on:
+  workflow_dispatch: # 수동 실행 버튼 활성화
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode version
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Inspect structure and build
+        run: |
+          # 루트 또는 scripts/ 내의 의존성/빌드 환경 확인
+          if [ -f "Makefile" ]; then
+            echo "Makefile found. Checking targets..."
+            cat Makefile
+          fi
+          
+          # ios 폴더 내 Xcode 프로젝트/워크스페이스 탐색
+          cd ios
+          PROJECT=$(find . -maxdepth 2 -name "*.xcworkspace" | head -n 1)
+          if [ -z "$PROJECT" ]; then
+            PROJECT=$(find . -maxdepth 2 -name "*.xcodeproj" | head -n 1)
+          fi
+          
+          echo "Found project: $PROJECT"
+          
+          # 프로젝트 스킴 목록 출력 및 첫 번째 스킴 자동 선택
+          SCHEME=$(xcodebuild -list -json | python3 -c "import sys, json; data=json.load(sys.stdin); print((data.get('workspace') or data.get('project'))['schemes'][0])")
+          echo "Building scheme: $SCHEME"
+
+          # 서명 없이(CODE_SIGNING_ALLOWED=NO) Release 빌드
+          if [[ "$PROJECT" == *.xcworkspace ]]; then
+            xcodebuild -workspace "$PROJECT" \
+              -scheme "$SCHEME" \
+              -configuration Release \
+              -sdk iphoneos \
+              -derivedDataPath build \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY=""
+          else
+            xcodebuild -project "$PROJECT" \
+              -scheme "$SCHEME" \
+              -configuration Release \
+              -sdk iphoneos \
+              -derivedDataPath build \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY=""
+          fi
+
+      - name: Package into .ipa
+        run: |
+          mkdir -p Payload
+          APP_PATH=$(find ios/build -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: .app bundle not found!"
+            exit 1
+          fi
+          cp -r "$APP_PATH" Payload/
+          zip -r WindowsiOS-unsigned.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WindowsiOS-IPA
+          path: WindowsiOS-unsigned.ipa
