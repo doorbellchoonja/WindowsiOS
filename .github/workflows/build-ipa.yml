@@ -21,48 +21,54 @@ jobs:
           xcodebuild -version
           brew install xcodegen pkg-config meson ninja cmake
 
-      - name: Inspect repository structure
-        run: |
-          echo "=== Root ==="
-          ls -la
-          echo "=== ios/ ==="
-          find ios -maxdepth 3 || true
-          echo "=== scripts/ ==="
-          ls -la scripts/ || true
-          echo "=== README.md ==="
-          cat README.md || true
-
       - name: Build iOS dependencies & static library
         run: |
           chmod +x scripts/build_ios_deps.sh
-          if ! bash scripts/build_ios_deps.sh; then
-            echo "=== Dependency build failed! Dumping logs ==="
-            cat work/ios_deps_build/*.log || true
-            exit 1
-          fi
+          bash scripts/build_ios_deps.sh
           make ios-lib
+
+      - name: Patch HingeSensorView for standard iOS SDK
+        run: |
+          echo "=== Before patch (lines 155-185) ==="
+          nl -ba ios/Sources/HingeSensorView.swift | sed -n '155,185p'
+
+          python3 - <<'EOF'
+          path = "ios/Sources/HingeSensorView.swift"
+          with open(path, "r") as f:
+              lines = f.readlines()
+
+          new_lines = []
+          skip_brace = 0
+          for line in lines:
+              if "UIHingeInteraction" in line:
+                  # 블록 시작이면 닫는 중괄호까지 주석 처리
+                  skip_brace += line.count("{") - line.count("}")
+                  new_lines.append("// [Patched for standard iOS SDK] " + line)
+              elif skip_brace > 0:
+                  skip_brace += line.count("{") - line.count("}")
+                  new_lines.append("// [Patched] " + line)
+              else:
+                  new_lines.append(line)
+
+          with open(path, "w") as f:
+              f.writelines(new_lines)
+          EOF
+
+          echo "=== After patch (lines 155-185) ==="
+          nl -ba ios/Sources/HingeSensorView.swift | sed -n '155,185p'
 
       - name: Generate & Build Xcode project
         run: |
-          # project.yml이 있으면 XcodeGen으로 프로젝트 생성
           if [ -f "ios/project.yml" ]; then
             (cd ios && xcodegen generate)
           elif [ -f "project.yml" ]; then
             xcodegen generate
           fi
 
-          # .xcworkspace / .xcodeproj 탐색
           PROJECT=$(find . -maxdepth 3 -name "*.xcworkspace" | head -n 1)
           if [ -z "$PROJECT" ]; then
             PROJECT=$(find . -maxdepth 3 -name "*.xcodeproj" | head -n 1)
           fi
-
-          if [ -z "$PROJECT" ]; then
-            echo "Error: No .xcodeproj or .xcworkspace found! Check 'Inspect repository structure' output above."
-            exit 1
-          fi
-
-          echo "Building project: $PROJECT"
 
           if [[ "$PROJECT" == *.xcworkspace ]]; then
             SCHEME=$(xcodebuild -workspace "$PROJECT" -list -json | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['workspace']['schemes'][0])")
