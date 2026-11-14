@@ -19,12 +19,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-utils qemu-efi-aarch64 build-essential
-          make build/hvsparse
+          # Linux에서 SEEK_DATA, pread, pwrite, ftruncate 인식되도록 -D_GNU_SOURCE 추가
+          make build/hvsparse CFLAGS="-std=c11 -D_GNU_SOURCE -Wall -Wextra -O2 -g -Icore -Ihost -Idevices"
 
       - name: Prepare UEFI firmware (code.fd & vars.fd)
         run: |
           mkdir -p Win11Pack
-          # 64MB 패딩된 ARM64 UEFI 코드 및 NVRAM 변수 파일 생성
           cp /usr/share/AAVMF/AAVMF_CODE.fd Win11Pack/code.fd
           cp /usr/share/AAVMF/AAVMF_VARS.fd Win11Pack/vars.fd
           truncate -s 64M Win11Pack/code.fd
@@ -32,9 +32,15 @@ jobs:
 
       - name: Create sparse Windows 11 disk (windows11.hvsparse)
         run: |
-          # 실제 용량 0MB에 가까운 스파스 raw 이미지 생성 후 hvsparse 포맷 변환
           truncate -s ${{ github.event.inputs.disk_size_gb }}G win11.raw
-          ./build/hvsparse convert win11.raw Win11Pack/windows11.hvsparse
+          # 서브커맨드(convert 또는 pack) 자동 확인 후 변환
+          USAGE=$(./build/hvsparse 2>&1 || true)
+          echo "$USAGE"
+          if echo "$USAGE" | grep -q "pack"; then
+            ./build/hvsparse pack win11.raw Win11Pack/windows11.hvsparse
+          else
+            ./build/hvsparse convert win11.raw Win11Pack/windows11.hvsparse
+          fi
           rm -f win11.raw
           ls -lh Win11Pack/
 
