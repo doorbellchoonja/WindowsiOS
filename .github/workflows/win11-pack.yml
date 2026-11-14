@@ -1,0 +1,45 @@
+name: Build Win11 Boot Pack (iPhone Only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      disk_size_gb:
+        description: '가상 디스크 용량 (GB)'
+        required: true
+        default: '32'
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install QEMU tools & build hvsparse
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-utils qemu-efi-aarch64 build-essential
+          make build/hvsparse
+
+      - name: Prepare UEFI firmware (code.fd & vars.fd)
+        run: |
+          mkdir -p Win11Pack
+          # 64MB 패딩된 ARM64 UEFI 코드 및 NVRAM 변수 파일 생성
+          cp /usr/share/AAVMF/AAVMF_CODE.fd Win11Pack/code.fd
+          cp /usr/share/AAVMF/AAVMF_VARS.fd Win11Pack/vars.fd
+          truncate -s 64M Win11Pack/code.fd
+          truncate -s 64M Win11Pack/vars.fd
+
+      - name: Create sparse Windows 11 disk (windows11.hvsparse)
+        run: |
+          # 실제 용량 0MB에 가까운 스파스 raw 이미지 생성 후 hvsparse 포맷 변환
+          truncate -s ${{ github.event.inputs.disk_size_gb }}G win11.raw
+          ./build/hvsparse convert win11.raw Win11Pack/windows11.hvsparse
+          rm -f win11.raw
+          ls -lh Win11Pack/
+
+      - name: Upload Win11 Boot Pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: Win11-Boot-Pack
+          path: Win11Pack/
