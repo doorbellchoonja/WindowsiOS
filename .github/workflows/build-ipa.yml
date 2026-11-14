@@ -29,9 +29,6 @@ jobs:
 
       - name: Patch HingeSensorView for standard iOS SDK
         run: |
-          echo "=== Before patch (lines 155-185) ==="
-          nl -ba ios/Sources/HingeSensorView.swift | sed -n '155,185p'
-
           python3 - <<'EOF'
           path = "ios/Sources/HingeSensorView.swift"
           with open(path, "r") as f:
@@ -41,11 +38,12 @@ jobs:
           skip_brace = 0
           for line in lines:
               if "UIHingeInteraction" in line:
-                  # 블록 시작이면 닫는 중괄호까지 주석 처리
                   skip_brace += line.count("{") - line.count("}")
                   new_lines.append("// [Patched for standard iOS SDK] " + line)
               elif skip_brace > 0:
                   skip_brace += line.count("{") - line.count("}")
+                  new_lines.append("// [Patched] " + line)
+              elif "addInteraction(interaction)" in line:
                   new_lines.append("// [Patched] " + line)
               else:
                   new_lines.append(line)
@@ -53,9 +51,6 @@ jobs:
           with open(path, "w") as f:
               f.writelines(new_lines)
           EOF
-
-          echo "=== After patch (lines 155-185) ==="
-          nl -ba ios/Sources/HingeSensorView.swift | sed -n '155,185p'
 
       - name: Generate & Build Xcode project
         run: |
