@@ -15,64 +15,50 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Select Xcode & install tools
+      - name: Select Xcode & install build tools
         run: |
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
-          # XcodeGen 및 pkg-config 설치 (project.yml 및 slirp 의존성 대비)
-          brew install xcodegen pkg-config libslirp || true
+          brew install xcodegen pkg-config meson ninja cmake
 
-      - name: Inspect repository files
+      - name: Inspect repository structure
         run: |
-          echo "=== Root files ==="
+          echo "=== Root ==="
           ls -la
-          echo "=== ios/ files ==="
-          ls -la ios/ || true
-          echo "=== scripts/ files ==="
+          echo "=== ios/ ==="
+          find ios -maxdepth 3 || true
+          echo "=== scripts/ ==="
           ls -la scripts/ || true
           echo "=== README.md ==="
           cat README.md || true
 
-      - name: Build dependencies, ios-lib & generate Xcode project
+      - name: Build iOS dependencies & static library
         run: |
-          # 1. scripts/ 또는 ios/ 내의 의존성/프로젝트 생성 스크립트 확인 및 실행
-          for script in scripts/*.sh ios/*.sh; do
-            if [ -f "$script" ]; then
-              echo "Found script: $script"
-              cat "$script"
-            fi
-          done
-
-          # ios/deps/include/slirp 가 없으면 빌드 스크립트 탐색 후 실행
-          if [ ! -d "ios/deps/include/slirp" ]; then
-            BUILD_DEPS=$(find scripts ios -maxdepth 2 -name "*slirp*" -o -name "*deps*" -o -name "*setup*" | grep "\.sh$" | head -n 1)
-            if [ -n "$BUILD_DEPS" ]; then
-              echo "Running dependency script: $BUILD_DEPS"
-              chmod +x "$BUILD_DEPS"
-              bash "$BUILD_DEPS"
-            fi
+          chmod +x scripts/build_ios_deps.sh
+          if ! bash scripts/build_ios_deps.sh; then
+            echo "=== Dependency build failed! Dumping logs ==="
+            cat work/ios_deps_build/*.log || true
+            exit 1
           fi
-
-          # 2. C/ObjC 코어 정적 라이브러리(build/ios/libwinvm.a) 빌드
           make ios-lib
 
-          # 3. XcodeGen(project.yml)이 있으면 .xcodeproj 생성
+      - name: Generate & Build Xcode project
+        run: |
+          # project.yml이 있으면 XcodeGen으로 프로젝트 생성
           if [ -f "ios/project.yml" ]; then
-            echo "Generating Xcode project via xcodegen..."
             (cd ios && xcodegen generate)
           elif [ -f "project.yml" ]; then
             xcodegen generate
           fi
 
-      - name: Build iOS App
-        run: |
+          # .xcworkspace / .xcodeproj 탐색
           PROJECT=$(find . -maxdepth 3 -name "*.xcworkspace" | head -n 1)
           if [ -z "$PROJECT" ]; then
             PROJECT=$(find . -maxdepth 3 -name "*.xcodeproj" | head -n 1)
           fi
 
           if [ -z "$PROJECT" ]; then
-            echo "Error: Still no .xcodeproj or .xcworkspace found!"
+            echo "Error: No .xcodeproj or .xcworkspace found! Check 'Inspect repository structure' output above."
             exit 1
           fi
 
